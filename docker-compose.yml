@@ -1,0 +1,43 @@
+version: '3.8'
+services:
+  llm:
+    build: ./services/llm_service
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  observer:
+    build: ./services/observer_service
+    ports:
+      - "8002:8000"
+    restart: unless-stopped
+
+  executor:
+    build: ./services/executor_service
+    ports:
+      - "8003:8000"
+    restart: unless-stopped
+
+  memory:
+    build: ./services/memory_service
+    ports:
+      - "8004:8000"
+    restart: unless-stopped
+
+  planner:
+    build: ./services/planner_service
+    ports:
+      - "8005:8000"
+    restart: unless-stopped
+
+  orchestrator:
+    build: ./services/orchestrator_mcp
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  locator_resolver:
+    build: ./services/locator_resolver_service
+    ports:
+      - "8006:8000"
+    restart: unless-stopped 
