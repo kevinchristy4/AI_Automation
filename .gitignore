@@ -419,3 +419,8 @@ vector_store/
 
 # Observer service screenshots
 observer_screenshots/ 
+
+# Debug files
+debug_outputs/
+debug_dom_for_llm.json
+prompt.txt

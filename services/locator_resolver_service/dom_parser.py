@@ -1,6 +1,7 @@
 from bs4 import BeautifulSoup, Tag, Comment
 import re
 from .scorer import LocatorScorer
+from .signature_generator import SignatureGenerator
 
 class DomParser:
     IMPORTANT_TAGS = {
@@ -14,11 +15,41 @@ class DomParser:
 
     @staticmethod
     def clean_dom(soup):
+        # Remove unwanted tags (head, script, etc.)
         for tag in ["head", "script", "style", "link", "meta", "noscript", "template"]:
             for match in soup.find_all(tag):
                 match.decompose()
+
+        # Remove elements (and their children) that are hidden by style or hidden attribute
+        def is_hidden(tag):
+            # Check for style="display: none" (case-insensitive, whitespace-tolerant)
+            style = tag.attrs.get("style", "")
+            if isinstance(style, list):
+                style = " ".join(style)
+            if re.search(r"display\s*:\s*none", style, re.IGNORECASE):
+                return True
+            # Check for hidden attribute (present, regardless of value)
+            if "hidden" in tag.attrs:
+                return True
+            return False
+
+        # Collect all tags to remove (if they or any ancestor are hidden)
+        tags_to_remove = set()
+        for tag in soup.find_all(True):
+            current = tag
+            while current and isinstance(current, Tag):
+                if is_hidden(current):
+                    tags_to_remove.add(tag)
+                    break
+                current = current.parent
+        for tag in tags_to_remove:
+            tag.decompose()
+
+        # Remove comments
         for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
             comment.extract()
+
+        # Remove unwanted attributes
         allowed_attrs = {"id", "class", "name", "type", "value", "aria-label", "aria-labelledby", "role", "placeholder", "href", "alt", "title"}
         for tag in soup.find_all(True):
             if isinstance(tag, Tag):
@@ -27,6 +58,7 @@ class DomParser:
                     del tag.attrs[attr]
         return soup
 
+# try to call this method before cleaning up the dom - cause there are instance where the xpath generated will be invalid due to missing strucure 
     @staticmethod
     def get_xpath(element):
         components = []
@@ -55,8 +87,8 @@ class DomParser:
         locators = []
         tag = element.name
         attrs = element.attrs
-        text = ' '.join(element.stripped_strings)
-        text = re.sub(r'\s+', ' ', text).strip()
+        direct_text = ''.join(t for t in element.contents if isinstance(t, str)).strip()
+        text = re.sub(r'\s+', ' ', direct_text).strip()
 
         role = attrs.get('role', tag)
         name = attrs.get('aria-label', text)
@@ -72,10 +104,10 @@ class DomParser:
             score = LocatorScorer.score_locator("get_by_label", locator_string, attrs, text)
             locators.append({"type": "get_by_label", "locator": locator_string, "score": score})
 
-        if text:
-            exact = ", {{ exact: true }}" if len(text) < 30 else ""
-            locator_string = f'page.get_by_text("{text}"{exact})'
-            score = LocatorScorer.score_locator("get_by_text", locator_string, attrs, text)
+        if direct_text:
+            exact = ", { exact: true }" if len(direct_text) < 30 else ""
+            locator_string = f'page.get_by_text("{direct_text}"{exact})'
+            score = LocatorScorer.score_locator("get_by_text", locator_string, attrs, direct_text)
             locators.append({"type": "get_by_text", "locator": locator_string, "score": score})
 
         css_selector = tag
@@ -121,31 +153,98 @@ class DomParser:
         }
 
     @staticmethod
+    def clean_dom_new(soup):
+        # Step 1: Perform initial cleaning (same as original clean_dom)
+        for tag in ["head", "script", "style", "link", "meta", "noscript", "template"]:
+            for match in soup.find_all(tag):
+                match.decompose()
+
+        def is_hidden(tag):
+            style = tag.attrs.get("style", "")
+            if isinstance(style, list):
+                style = " ".join(style)
+            if re.search(r"display\s*:\s*none", style, re.IGNORECASE):
+                return True
+            if "hidden" in tag.attrs:
+                return True
+            return False
+
+        tags_to_remove = set()
+        for tag in soup.find_all(True):
+            current = tag
+            while current and isinstance(current, Tag):
+                if is_hidden(current):
+                    tags_to_remove.add(tag)
+                    break
+                current = current.parent
+        for tag in tags_to_remove:
+            if not tag.decomposed:
+                tag.decompose()
+
+        for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+            comment.extract()
+
+        allowed_attrs = {"id", "class", "name", "type", "value", "aria-label", "aria-labelledby", "role", "placeholder", "href", "alt", "title"}
+        for tag in soup.find_all(True):
+            if isinstance(tag, Tag):
+                attrs_to_remove = [attr for attr in tag.attrs if attr not in allowed_attrs]
+                for attr in attrs_to_remove:
+                    del tag.attrs[attr]
+
+        # Step 2: Apply new relevancy-based filtering using a robust bottom-up approach
+        interactive_tags = {'a', 'button', 'input', 'select', 'textarea', 'option', 'label'}
+        identifying_attrs = {'id', 'name', 'aria-label', 'aria-labelledby', 'placeholder'} # role is often used for structure
+
+        # Get all elements and reverse them to process from the leaves up to the root
+        all_elements = soup.find_all(True)
+        all_elements.reverse()
+
+        for element in all_elements:
+            if not isinstance(element, Tag) or not element.parent:
+                continue
+
+            is_interactive = element.name in interactive_tags or element.attrs.get('role') in ['button', 'link', 'checkbox', 'radio', 'textbox']
+            has_identifying_attrs = any(attr in element.attrs for attr in identifying_attrs)
+            has_meaningful_text = any(isinstance(c, str) and c.strip() for c in element.contents)
+            
+            # Check if the element has any children that are tags
+            has_tag_children = element.find(True, recursive=False) is not None
+
+            # If the element is meaningful by itself, we keep it and continue
+            if is_interactive or has_identifying_attrs or has_meaningful_text:
+                continue
+
+            # If it's not meaningful by itself but has children, we also keep it.
+            # Since we are processing bottom-up, any non-meaningful children would have
+            # already been removed. If it still has children, they are important.
+            if has_tag_children:
+                continue
+
+            # If we reach here, the element is not meaningful and has no meaningful children left.
+            element.decompose()
+            
+        return soup
+
+    @staticmethod
     def to_flat_list(soup):
         elements = []
 
         def walk(el):
             if hasattr(el, 'name') and el.name is not None:
                 if el.name in DomParser.IMPORTANT_TAGS:
-                    direct_text = ""
-                    for content in el.contents:
-                        if isinstance(content, str):
-                            text = content.strip()
-                            if text:
-                                direct_text += text + " "
-                    direct_text = direct_text.strip()
+                    # Generate signature first
+                    signature = SignatureGenerator.generate_signature(el)
+                    
+                    # Only include elements with meaningful signatures
+                    if signature:
+                        xpath = DomParser.get_xpath(el)
+                        locators = DomParser.generate_locators(el, xpath)
+                        sorted_locators = sorted(locators, key=lambda x: x["score"], reverse=True)
 
-                    xpath = DomParser.get_xpath(el)
-                    locators = DomParser.generate_locators(el, xpath)
-                    best_locator = sorted(locators, key=lambda x: x["score"], reverse=True)[0] if locators else None
-
-                    elements.append({
-                        "tag": el.name,
-                        "attributes": dict(el.attrs),
-                        "innerText": direct_text,
-                        "locators": locators,
-                        "best_locator": best_locator
-                    })
+                        elements.append({
+                            "signature": signature,
+                            "locators": sorted_locators,
+                        })
 
                 for child in el.children:
                     if isinstance(child, Tag):
