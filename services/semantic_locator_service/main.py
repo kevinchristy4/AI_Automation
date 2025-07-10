@@ -22,8 +22,8 @@ def resolve_locator_two_stage(request: LocatorRequest):
         signatures = [element["signature"] for element in request.dom]
         vectors = embedding_model.embed(signatures)
         
-        # Initialize vector database
-        vector_db = VectorDatabase(vectors, request.dom)
+        # Initialize vector database with embedding model for consistency
+        vector_db = VectorDatabase(vectors, request.dom, embedding_model)
         
         # Create two-stage resolver
         two_stage_resolver = TwoStageLocatorResolver(vector_db, embedding_model)
