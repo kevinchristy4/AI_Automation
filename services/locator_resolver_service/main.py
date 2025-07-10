@@ -19,8 +19,8 @@ logger = logging.getLogger("locator_resolver_service")
 @app.post("/resolve-locator", response_model=LocatorResolveResponse)
 async def resolve_locator(request: LocatorResolveRequest):
     soup = BeautifulSoup(request.dom, "html.parser")
-    soup = DomParser.clean_dom_new(soup)
-    dom_flat = DomParser.to_flat_list(soup.body or soup)
+    # Pass the full unfiltered soup to to_flat_list - it will handle cleaning internally
+    dom_flat = DomParser.to_flat_list(soup)
 
     # Prepare data for the LLM: pass the original dom_flat JSON
     dom_for_llm = json.dumps(dom_flat, ensure_ascii=False)

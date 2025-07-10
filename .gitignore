@@ -424,3 +424,4 @@ observer_screenshots/
 debug_outputs/
 debug_dom_for_llm.json
 prompt.txt
+debuglogs.txt

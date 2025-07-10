@@ -13,50 +13,6 @@ class DomParser:
         'iframe', 'canvas', 'video', 'audio'
     }
 
-    @staticmethod
-    def clean_dom(soup):
-        # Remove unwanted tags (head, script, etc.)
-        for tag in ["head", "script", "style", "link", "meta", "noscript", "template"]:
-            for match in soup.find_all(tag):
-                match.decompose()
-
-        # Remove elements (and their children) that are hidden by style or hidden attribute
-        def is_hidden(tag):
-            # Check for style="display: none" (case-insensitive, whitespace-tolerant)
-            style = tag.attrs.get("style", "")
-            if isinstance(style, list):
-                style = " ".join(style)
-            if re.search(r"display\s*:\s*none", style, re.IGNORECASE):
-                return True
-            # Check for hidden attribute (present, regardless of value)
-            if "hidden" in tag.attrs:
-                return True
-            return False
-
-        # Collect all tags to remove (if they or any ancestor are hidden)
-        tags_to_remove = set()
-        for tag in soup.find_all(True):
-            current = tag
-            while current and isinstance(current, Tag):
-                if is_hidden(current):
-                    tags_to_remove.add(tag)
-                    break
-                current = current.parent
-        for tag in tags_to_remove:
-            tag.decompose()
-
-        # Remove comments
-        for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
-            comment.extract()
-
-        # Remove unwanted attributes
-        allowed_attrs = {"id", "class", "name", "type", "value", "aria-label", "aria-labelledby", "role", "placeholder", "href", "alt", "title"}
-        for tag in soup.find_all(True):
-            if isinstance(tag, Tag):
-                attrs_to_remove = [attr for attr in tag.attrs if attr not in allowed_attrs]
-                for attr in attrs_to_remove:
-                    del tag.attrs[attr]
-        return soup
 
 # try to call this method before cleaning up the dom - cause there are instance where the xpath generated will be invalid due to missing strucure 
     @staticmethod
@@ -228,6 +184,24 @@ class DomParser:
     @staticmethod
     def to_flat_list(soup):
         elements = []
+        
+        # First, generate XPaths for all elements before cleaning
+        # We need to do this because cleaning might remove elements that affect XPath generation
+        xpath_cache = {}
+        
+        def cache_xpaths(el):
+            if hasattr(el, 'name') and el.name is not None:
+                if el.name in DomParser.IMPORTANT_TAGS:
+                    xpath_cache[el] = DomParser.get_xpath(el)
+                for child in el.children:
+                    if isinstance(child, Tag):
+                        cache_xpaths(child)
+        
+        # Cache XPaths for all important elements
+        cache_xpaths(soup)
+        
+        # Now clean the DOM
+        cleaned_soup = DomParser.clean_dom_new(soup)
 
         def walk(el):
             if hasattr(el, 'name') and el.name is not None:
@@ -237,7 +211,8 @@ class DomParser:
                     
                     # Only include elements with meaningful signatures
                     if signature:
-                        xpath = DomParser.get_xpath(el)
+                        # Use cached XPath if available, otherwise generate new one
+                        xpath = xpath_cache.get(el, DomParser.get_xpath(el))
                         locators = DomParser.generate_locators(el, xpath)
                         sorted_locators = sorted(locators, key=lambda x: x["score"], reverse=True)
 
@@ -250,5 +225,5 @@ class DomParser:
                     if isinstance(child, Tag):
                         walk(child)
 
-        walk(soup)
+        walk(cleaned_soup)
         return elements
