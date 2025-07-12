@@ -11,11 +11,11 @@ import io
 
 
 from fastapi import FastAPI
-from .models import NavigateRequest, NavigateResponse, StateResponse, ActionRequest, ActionResponse
+from .models import NavigateRequest, NavigateResponse, StateResponse, ActionRequest, ActionResponse, AccessibilityTreeResponse
 import logging
 import base64
 from playwright.async_api import async_playwright
-from typing import Optional
+from typing import Optional, Dict, Any
 
 
 app = FastAPI(title="Observer Service", version="0.1")
@@ -75,6 +75,72 @@ async def state():
     logger.info(f"Saved screenshot to {screenshot_path}")
     # Return filtered DOM and screenshot file path
     return StateResponse(dom=filtered_dom, screenshot_path=screenshot_path)
+
+@app.get("/accessibility-tree", response_model=AccessibilityTreeResponse)
+async def get_accessibility_tree(include_ignored: bool = False, include_hidden: bool = False):
+    """
+    Get the browser accessibility tree for the current webpage.
+    This provides semantic information about the page structure including
+    ARIA attributes, roles, labels, and accessibility properties.
+    
+    Args:
+        include_ignored: Whether to include ignored elements (default: False)
+        include_hidden: Whether to include hidden elements (default: False)
+    """
+    global page
+    if page is None:
+        logger.error("Playwright page is not initialized.")
+        return AccessibilityTreeResponse(success=False, message="Playwright page is not initialized.")
+    
+    try:
+        # Get the accessibility tree using Playwright's accessibility API
+        # with optional filtering
+        accessibility_tree = await page.accessibility.snapshot(
+            interesting_only=not include_hidden
+        )
+        
+        # If include_ignored is False, filter out ignored elements
+        if not include_ignored and accessibility_tree:
+            accessibility_tree = _filter_ignored_elements(accessibility_tree)
+        
+        logger.info("Successfully retrieved accessibility tree")
+        return AccessibilityTreeResponse(
+            success=True, 
+            accessibility_tree=accessibility_tree,
+            message="Accessibility tree retrieved successfully"
+        )
+    except Exception as e:
+        logger.error(f"Error getting accessibility tree: {e}")
+        return AccessibilityTreeResponse(
+            success=False, 
+            message=f"Error retrieving accessibility tree: {str(e)}"
+        )
+
+def _filter_ignored_elements(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Recursively filter out ignored elements from the accessibility tree.
+    """
+    if not node:
+        return node
+    
+    # If this node is ignored, return None
+    if node.get('ignored', False):
+        return None
+    
+    # Process children recursively
+    children = node.get('children', [])
+    filtered_children = []
+    
+    for child in children:
+        filtered_child = _filter_ignored_elements(child)
+        if filtered_child is not None:
+            filtered_children.append(filtered_child)
+    
+    # Create a new node with filtered children
+    filtered_node = node.copy()
+    filtered_node['children'] = filtered_children
+    
+    return filtered_node
 
 @app.post("/action", response_model=ActionResponse)
 async def perform_action(request: ActionRequest):

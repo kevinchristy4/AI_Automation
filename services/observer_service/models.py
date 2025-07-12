@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 class NavigateRequest(BaseModel):
     url: str
@@ -11,6 +11,11 @@ class NavigateResponse(BaseModel):
 class StateResponse(BaseModel):
     dom: str
     screenshot_path: str
+
+class AccessibilityTreeResponse(BaseModel):
+    success: bool
+    accessibility_tree: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
 
 class ActionRequest(BaseModel):
     action: str
